@@ -12,7 +12,7 @@ from .swin_mlp import SwinMLP
 
 
 def build_model(config):
-    model_type = config.MODEL.TYPE
+    model_type = config.MODEL.TYPE # default  'swin'
 
     # accelerate layernorm
     if config.FUSED_LAYERNORM:

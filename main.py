@@ -28,7 +28,7 @@ from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
     reduce_tensor
-
+from torchsummary import summary
 
 def parse_option():
     parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
@@ -86,6 +86,8 @@ def main(config):
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config)
+    summary(model, (3,config.DATA.IMG_SIZE, config.DATA.IMG_SIZE)) # print model
+
     logger.info(str(model))
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -300,17 +302,34 @@ if __name__ == '__main__':
         print("[warning] Apex amp has been deprecated, please use pytorch amp instead!")
 
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        # https://stackoverflow.com/questions/58271635/in-distributed-computing-what-are-world-size-and-rank
+        '''
+            group
+            进程组。默认情况只有一个组，一个 job 为一个组，也为一个 world
+
+            world size
+            全局进程个数
+
+            rank
+            表示进程序号，用于进程间的通讯。rank=0 的主机为 master 节点
+
+            local rank
+            进程内 GPU 编号，非显式参数，由 torch.distributed.launch 内部指定。
+            rank=3, local_rank=0 表示第 3 个进程内的第 1 块 GPU。
+
+        '''
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
     else:
         rank = -1
         world_size = -1
-    torch.cuda.set_device(config.LOCAL_RANK)
+    torch.cuda.set_device(config.LOCAL_RANK) # set device on a local rank
     torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
     torch.distributed.barrier()
 
     seed = config.SEED + dist.get_rank()
+    # seed = config.SEED + 1
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     np.random.seed(seed)
@@ -321,6 +340,7 @@ if __name__ == '__main__':
     linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
@@ -334,8 +354,10 @@ if __name__ == '__main__':
 
     os.makedirs(config.OUTPUT, exist_ok=True)
     logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=0, name=f"{config.MODEL.NAME}")
 
     if dist.get_rank() == 0:
+        # save the config on disk
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())

@@ -240,7 +240,7 @@ _C.FUSED_LAYERNORM = False
 
 
 def _update_config_from_file(config, cfg_file):
-    config.defrost()
+    config.defrost() # make config value mutable (可变的)
     with open(cfg_file, 'r') as f:
         yaml_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -248,16 +248,16 @@ def _update_config_from_file(config, cfg_file):
         if cfg:
             _update_config_from_file(
                 config, os.path.join(os.path.dirname(cfg_file), cfg)
-            )
+            ) # get customer config yaml
     print('=> merge config from {}'.format(cfg_file))
     config.merge_from_file(cfg_file)
-    config.freeze()
+    config.freeze() # """Make this CfgNode and all of its children immutable."""
 
 
 def update_config(config, args):
     _update_config_from_file(config, args.cfg)
 
-    config.defrost()
+    config.defrost() # make config mutable
     if args.opts:
         config.merge_from_list(args.opts)
 
@@ -315,7 +315,7 @@ def get_config(args):
     """Get a yacs CfgNode object with default values."""
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
-    config = _C.clone()
+    config = _C.clone() # default config
     update_config(config, args)
 
     return config
