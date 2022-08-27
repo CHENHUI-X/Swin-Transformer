@@ -438,7 +438,7 @@ class PatchMerging(nn.Module):
     r""" Patch Merging Layer.
 
     Args:
-        input_resolution (tuple[int]): Resolution of input feature.
+        input_resolution (tuple[int]): Resolution of input feature. eg 56
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
@@ -454,17 +454,63 @@ class PatchMerging(nn.Module):
         """
         x: B, H*W, C
         """
-        H, W = self.input_resolution
-        B, L, C = x.shape
+        H, W = self.input_resolution # eg 56
+        B, L, C = x.shape # ( B , 56 * 56 , C )
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
-        x = x.view(B, H, W, C)
+        x = x.view(B, H, W, C) # eg ( B , 56 , 56 , C )
+        '''
+        assume x : 6 * 6 
+                        *  *  *  *  *  * 
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *  
+        '''
 
         x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
+        '''
+            x0 
+                        +  *  +  *  +  * 
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *   
+        '''
         x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
+        '''
+            x1 
+                        *  *  *  *  *  * 
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *  
+        '''
+
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
+        '''
+            x2 
+                         *  +  *  +  *  + 
+                         *  *  *  *  *  *
+                         *  +  *  +  *  +
+                         *  *  *  *  *  *
+                         *  +  *  +  *  +
+                         *  *  *  *  *  *         
+        '''
         x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+        '''
+            x3 
+                        *  *  *  *  *  * 
+                        *  +  *  +  *  +
+                        *  *  *  *  *  *
+                        *  +  *  +  *  +
+                        *  *  *  *  *  *
+                        *  +  *  +  *  +  
+        '''
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
@@ -703,6 +749,8 @@ class SwinTransformer(nn.Module):
                                # eg. block 2 ,have 2 layer ,it's drop_path_rate should be [0.02 0.03]
                                norm_layer=norm_layer,
                                downsample= PatchMerging if (i_layer < self.num_layers - 1) else None,
+                               # merging the patch Neighbor
+
                                use_checkpoint=use_checkpoint,
                                fused_window_process=fused_window_process)
             self.layers.append(layer)
