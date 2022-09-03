@@ -52,8 +52,17 @@ def window_partition(x, window_size):
         windows: (num_windows*B, window_size, window_size, C)
     """
     B, H, W, C = x.shape
+    # E.g. ( B , 56 , 56 , 96 )
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    # (B , num of win within a row , num of win within a column  , window size , C )
+    '''
+            B , 
+            num patch of a raw within a window  , 
+            window_size, 
+            num patch of a raw within a window   , 
+            window size , 
+            C
+    '''
+    # (         B , num patch of a raw within a window  , window_size, num patch of a raw within a window   , window size , C )
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     # ( B * total num of window , window_size , window_size ,C)
     return windows
@@ -191,21 +200,39 @@ class WindowAttention(nn.Module):
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
-        B_, N, C = x.shape # shape like ( B , seq_len , feature num)
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        #  ( 3, B_, self.num_heads, N,  C // self.num_heads)
-        #  Q K V , 操作所有batch , 然后再拆分为具体几个head,每个head都要把sql过一遍, 但是seq的每一行feature num 变为 C // head
+        B_, N, C = x.shape
+        # shape like ( batch  , seq_len , dimension )
+        # e.g ( B * 8 * 8  , 7 * 7 , 96 ) for window size = 7 ,patch size = 4
+        # then it have 56 * 56 patch , and a window contains 7*7patch
+        # so have 8 * 8 window
+
+
+        qkv = self.qkv(x).reshape(
+            B_, N, 3, self.num_heads, C // self.num_heads
+        ).permute(2, 0, 3, 1, 4)
+        # self.qkv(x) shape with ( B * 8 * 8  , 7 * 7 , 96 * 3 )
+        # because of num_heads = [3, 6, 12, 24]
+        #  qkv with ( 3, B_, self.num_heads, N,  C // self.num_heads)
+        #  if num_head = 3
+        #  ( 3 , B_ , 3  ,  8*8 * 7*7  = 56 * 56 for total path num , 32 )
+        #  Q K V , 操作所有batch , 然后再拆分为具体几个head,每个head都要把seq
+        #  过一遍, 但是seq的每一行 feature num 变为 C // head (只负责自己的一部分)
 
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
+        # ( B_ ,  num_heads , N , N )
+        # ( B_ ,  3 , 56*56 , 56*56 )
+        # where N_ij is weights of patch_i and patch_j
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0) # Q*K^T + B
-
+        # ( B_ ,  num_heads , N , N )
+        # ( B_ ,  3 , 56*56 , 56*56 )
+        # where N_ij is weights of patch_i and patch_j
 
         if mask is not None:
             nW = mask.shape[0]
@@ -218,6 +245,10 @@ class WindowAttention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        # (attn @ v) =
+        #       ( B_ ,  3 , 56*56 , 56*56 ) * ( B_, 3 , 56 * 56 , 32 )
+        #           = ( B_, 3 , 56 * 56 , 32 )
+        # 再reshape , ( B_ , 56 * 56 , C )
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -266,9 +297,12 @@ class SwinTransformerBlock(nn.Module):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
+        # input_resolution = [ 56 , 28 , 14 , 7 ]
+        # Corresponding [ H/4 , H/8 , H/16 , H/32 ] ,H = 224
         self.num_heads = num_heads
-        self.window_size = window_size
-        self.shift_size = shift_size
+        # num_heads = [3, 6, 12, 24]
+        self.window_size = window_size # 7
+        self.shift_size = shift_size # 0 if (i % 2 == 0) else window_size // 2
         self.mlp_ratio = mlp_ratio
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
@@ -296,21 +330,69 @@ class SwinTransformerBlock(nn.Module):
             # see detail https://github.com/microsoft/Swin-Transformer/issues/38
             H, W = self.input_resolution # default path size = 4 , image size = 224 ,then H = 56
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
+            # e.g. shape with ( 1 , 56 , 56 ,1 )
+            # default window_size = 7 , total 8*8 window
+            # shift_size = window_size//2
+
             h_slices = (slice(0, -self.window_size),
                         slice(-self.window_size, -self.shift_size),
                         slice(-self.shift_size, None))
             w_slices = (slice(0, -self.window_size),
                         slice(-self.window_size, -self.shift_size),
                         slice(-self.shift_size, None))
+            # Is equality : (slice(0, -7, None), slice(-7, -3, None), slice(-3, None, None))
+            # slice(start, stop[, step])
+            '''
+            a = list(range(5))
+             out : [0, 1, 2, 3, 4]
+            b = slice(1,4,1)
+             out : slice(1, 4, 1)
+            a[b]
+             out : [1, 2, 3]
+            '''
+
+            # 这里在给几个区域划分标号
+            # 标号为 0,1,2,3,4,5,6,7,8 ,从左到右,从上到下
             cnt = 0
             for h in h_slices:
+                '''
+                    slice(0, -7, None)
+                    slice(-7, -3, None)
+                    slice(-3, None, None)
+                '''
                 for w in w_slices:
+                    '''
+                        slice(0, -7, None)
+                        slice(-7, -3, None)
+                        slice(-3, None, None)
+                    '''
                     img_mask[:, h, w, :] = cnt
+                    # e.g. shape with ( 1 , 56 , 56 ,1 )
                     cnt += 1
 
-            mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+            mask_windows = window_partition(img_mask, self.window_size)
+            # nW, window_size, window_size, 1
+            # ( B * total num of window , window_size , window_size ,1) , B = 1
+            # ( 8*8 , 7 , 7 , 1 )
             mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+            '''
+            # 拉直 , 做广播减法 , 以右下角4个区域为例, 4 5 7 8
+            >>> a = torch.Tensor([4,5,7,8])
+            >>> b = a.reshape(-1,1)
+            >>> a - b
+            >>>           4    5    7    8
+                tensor([[ 0.,  1.,  3.,  4.],   4
+                        [-1.,  0.,  2.,  3.],   5
+                        [-3., -2.,  0.,  1.],   7
+                        [-4., -3., -1.,  0.]])  8
+            # 可以看到,对角线为0,正好表示 区域4 和 区域4 要做attention ,
+            # 而4 与其他位置不为0 ,不需要丛attention , 同理
+            
+            # 这里分了9个区域,实际上4个区域即可
+            # See https://github.com/microsoft/Swin-Transformer/issues/194
+            '''
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
             '''
             tensor([[[[[   0.,    0.,    0.,    0.],
@@ -353,7 +435,7 @@ class SwinTransformerBlock(nn.Module):
 
         shortcut = x
         x = self.norm1(x)
-        x = x.view(B, H, W, C) # shape( B , 56 , 56 , 96)
+        x = x.view(B, H, W, C) # eg , shape( B , 56 , 56 , 96)
 
         # cyclic shift
         if self.shift_size > 0:
@@ -376,11 +458,15 @@ class SwinTransformerBlock(nn.Module):
                 '''
                 # partition windows
                 x_windows = window_partition(shifted_x, self.window_size)
-                # shape (nW*B, window_size, window_size, C)
+                # # ( B * total num of window , window_size , window_size ,C)
+                # e.g ( B * 8 * 8  , 7 , 7 , 96 ) for window size = 7 ,patch size = 4
+                # then it have 56 * 56 patch , and a window contains 7*7patch
+                # so have 8 * 8 window
 
             else:
                 x_windows = WindowProcess.apply(x, B, H, W, C, -self.shift_size, self.window_size)
         else:
+            # Do not slide
             shifted_x = x
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)
@@ -388,7 +474,12 @@ class SwinTransformerBlock(nn.Module):
 
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)
         # nW*B, window_size*window_size, C
-        # which like (batch , seq_len , feature num)
+        # # ( B * total num of window , window_size * window_size ,C)
+        # e.g ( B * 8 * 8  , 7 * 7 , 96 ) for window size = 7 ,patch size = 4
+        # then it have 56 * 56 patch , and a window contains 7*7patch
+        # so have 8 * 8 window
+        # shape like ( batch  , seq_len , dimension )
+
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
@@ -559,8 +650,12 @@ class BasicLayer(nn.Module):
 
         super().__init__()
         self.dim = dim
+        #  dim =  [ 96 , 96*2 ,96*4 ,96*8]
         self.input_resolution = input_resolution
+        # input_resolution = [ 56 , 28 , 14 , 7 ]
+        # Corresponding [ H/4 , H/8 , H/16 , H/32 ] ,H = 224
         self.depth = depth
+        # # [3, 6, 12, 24]
         self.use_checkpoint = use_checkpoint
 
         # build blocks
@@ -578,6 +673,7 @@ class BasicLayer(nn.Module):
                                  fused_window_process=fused_window_process)
             for i in range(depth)])
         # for first block , depth = 2 , second is 2 ,third is 6 , last is 2
+        # which means first block have 2 layers , second blocks have 2 layers
 
         # patch merging layer
         if downsample is not None:
@@ -736,10 +832,16 @@ class SwinTransformer(nn.Module):
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers): # default 4
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
+                               # [ 96 , 96*2 ,96*4 ,96*8]
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)),
+                               # input_resolution = [ 56 , 28 , 14 , 7 ]
+                               # Corresponding [ H/4 , H/8 , H/16 , H/32 ] ,H = 224
+
                                depth=depths[i_layer],
+                               # [ 2, 2, 6, 2]
                                num_heads=num_heads[i_layer],
+                               # [3, 6, 12, 24]
                                window_size=window_size,
                                mlp_ratio=self.mlp_ratio,
                                qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -779,7 +881,7 @@ class SwinTransformer(nn.Module):
         return {'relative_position_bias_table'}
 
     def forward_features(self, x):
-        x = self.patch_embed(x)
+        x = self.patch_embed(x) # ( B , 56*56 , 96)
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
