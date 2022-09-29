@@ -723,18 +723,19 @@ class PatchEmbed(nn.Module):
 
         # patch num in a row or column ,eg. 224/4 = 56
         # that's number of patches contained in each line
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
+        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]] # （56 ，56）
         self.img_size = img_size
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution
 
-        self.num_patches = patches_resolution[0] * patches_resolution[1]
+        self.num_patches = patches_resolution[0] * patches_resolution[1] # 56 * 56
         # total path in a channel
 
         self.in_chans = in_chans
         self.embed_dim = embed_dim
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        # (B , 3 , 224 ,224) - > (B , 96 , 56 ,56 )
         if norm_layer is not None:
             # default nn.LayerNorm
             self.norm = norm_layer(embed_dim)
@@ -747,7 +748,8 @@ class PatchEmbed(nn.Module):
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
-        # flatten(2) , 2 means that start flatten dim is 2 , which is w and h
+
+        # ** flatten(2) , 2 means that start flatten dim is 2 , which is w and h **
         # input ( B , 3 , 224 , 224) -> ( B , 96 , 56 , 56) -> ( B , 56*56 , 96)
 
         if self.norm is not None:
