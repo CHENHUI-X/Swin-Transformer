@@ -64,7 +64,7 @@ def window_reverse(windows, window_size, H, W):
 
 
 class SwinMLPBlock(nn.Module):
-    r""" Swin MLP Block.
+    r""" Swin MLP Transformer_SubBlock.
 
     Args:
         dim (int): Number of input channels.

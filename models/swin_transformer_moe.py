@@ -255,7 +255,7 @@ class WindowAttention(nn.Module):
 
 
 class SwinTransformerBlock(nn.Module):
-    r""" Swin Transformer Block.
+    r""" Swin Transformer Transformer_SubBlock.
 
     Args:
         dim (int): Number of input channels.
