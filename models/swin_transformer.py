@@ -406,7 +406,7 @@ class SwinTransformerBlock(nn.Module):
                         [-3., -2.,  0.,  1.],   7
                         [-4., -3., -1.,  0.]])  8
             # 可以看到,对角线为0,正好表示 区域4 和 区域4 要做attention ,
-            # 而4 与其他位置不为0 ,不需要丛attention , 同理
+            # 而4 与其他位置不为0 ,不需要attention , 同理
 
             # 这里分了9个区域,实际上4个区域即可
             # See https://github.com/microsoft/Swin-Transformer/issues/194
@@ -420,7 +420,7 @@ class SwinTransformerBlock(nn.Module):
     def forward(self, x):
         H, W = self.input_resolution
         B, L, C = x.shape
-        # eg. shape( B , 56*56 , 96) ,56 =  224/4 means that "input_resolution"
+        # eg. shape( B , 56*56 , 96) ,56 =  224 / 4 means that "input_resolution"
         # 4 means patch size ,which pixel num of a row of a patch
 
         assert L == H * W, "input feature has wrong size"
@@ -851,7 +851,7 @@ class SwinTransformer(nn.Module):
                                # Res drop rate of layers belonging to this block
                                # eg. block 2 ,have 2 layer ,it's drop_path_rate should be [0.02 0.03]
                                norm_layer=norm_layer,
-                               downsample= PatchMerging if (i_layer < self.num_layers - 1) else None,
+                               downsample = PatchMerging if (i_layer < self.num_layers - 1) else None,
                                # merging the patch Neighbor
 
                                use_checkpoint=use_checkpoint,
