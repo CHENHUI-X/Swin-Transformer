@@ -338,10 +338,10 @@ class SwinTransformerBlock(nn.Module):
             # Need calculate attention mask for SW-MSA
             # see detail https://github.com/microsoft/Swin-Transformer/issues/38
             H, W = self.input_resolution # default path size = 4 , image size = 224 ,then H = 56
-
+            # 56 个 初始 patch
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
             # e.g. shape with ( 1 , 56 , 56 ,1 )
-            # default window_size = 7 , total 8*8 window
+            # default window_size = 7 , total 8 * 8 window
             # shift_size = window_size//2
 
             h_slices = (slice(0, -self.window_size),
@@ -363,18 +363,19 @@ class SwinTransformerBlock(nn.Module):
 
             # 这里在给几个区域划分标号
             # 标号为 0,1,2,3,4,5,6,7,8 ,从左到右,从上到下
+            # https://drive.google.com/file/d/16Nlb248yo0kVzvTwpsq9Ygt_oiCmuyD9/view?usp=sharing
             cnt = 0
             for h in h_slices:
                 '''
-                    slice(0, -7, None)
-                    slice(-7, -3, None)
-                    slice(-3, None, None)
+                    slice(0, -7)
+                    slice(-7, -3)
+                    slice(-3, None)
                 '''
                 for w in w_slices:
                     '''
-                        slice(0, -7, None)
-                        slice(-7, -3, None)
-                        slice(-3, None, None)
+                        slice(0, -7)
+                        slice(-7, -3)
+                        slice(-3, None)
                     '''
                     img_mask[:, h, w, :] = cnt # 标号
                     # e.g. shape with ( 1 , 56 , 56 ,1 )
@@ -385,6 +386,8 @@ class SwinTransformerBlock(nn.Module):
             # ( total num of window , window_size , window_size ,1) , B = 1
             # ( 8 * 8 , 7 , 7 , 1 )
             # 这个地方就是 ‘1张’ image
+            # https://drive.google.com/file/d/16Nlb248yo0kVzvTwpsq9Ygt_oiCmuyD9/view?usp=sharing
+
             mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
             # ( 8 * 8 , 7 * 7 ）
             # 总共 8 * 8 个窗口， 每个窗口内 7 * 7 个 patch相互之间计算attention
@@ -394,6 +397,7 @@ class SwinTransformerBlock(nn.Module):
             # # ( 8 * 8 , 7 * 7 , 7 * 7）
 
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+            # https://drive.google.com/file/d/16Nlb248yo0kVzvTwpsq9Ygt_oiCmuyD9/view?usp=sharing
 
             '''
             # 拉直 , 做广播减法 , 以右下角4个区域为例, 4 5 7 8
@@ -477,6 +481,7 @@ class SwinTransformerBlock(nn.Module):
         attn_windows = self.attn(x_windows, mask=self.attn_mask)
         # nW*B, window_size*window_size, C
         # here nW = 8 * 8
+        # 同一个widow内部之间做attention的时候，受改window内部的mask约束
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -729,8 +734,9 @@ class PatchEmbed(nn.Module):
         self.in_chans = in_chans
         self.embed_dim = embed_dim
 
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=patch_size)
         # 可以看到，这里使用的是patch_size的核 和 patch_size的步长来实现几个像素作为一个patch
+        # 这样经过embedding之后，后续操作的对象就不是像素上的尺寸了，是直接 一 个 patch 做一个操作像素
         # 和VIT里边的不一样，VIT是直接物理上把图片按8*8划分，然后拉直进行后续操作，所以这里和VIT还不一样
         # 后来的ConvNext也是和这个操作一样。
         # (B , 3 , 224 ,224) - > (B , 96 , 56 ,56 )
