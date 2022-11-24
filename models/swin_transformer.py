@@ -734,7 +734,7 @@ class PatchEmbed(nn.Module):
         self.in_chans = in_chans
         self.embed_dim = embed_dim
 
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=patch_size)
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride = patch_size)
         # 可以看到，这里使用的是patch_size的核 和 patch_size的步长来实现几个像素作为一个patch
         # 这样经过embedding之后，后续操作的对象就不是像素上的尺寸了，是直接 一 个 patch 做一个操作像素
         # 和VIT里边的不一样，VIT是直接物理上把图片按8*8划分，然后拉直进行后续操作，所以这里和VIT还不一样
